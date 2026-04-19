@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+
+/* Spreadsheet cell colour coding — matches xlsx legend */
+.cell-input { background-color: #fef9c3; color: #1d4ed8; }
+.cell-calc { background-color: #dbeafe; color: #047857; }
+.cell-total { background-color: #e2e8f0; color: #0f172a; font-weight: 600; }
+.cell-section { background-color: #0f172a; color: #f8fafc; font-weight: 700; }
