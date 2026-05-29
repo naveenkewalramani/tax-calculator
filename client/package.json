@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@babel/core": "^7.29.7",
     "decimal.js": "^10.4.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

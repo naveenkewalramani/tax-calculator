@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Purpose
 
@@ -18,7 +18,8 @@ Comparable to TaxFix and ELSTER for estimation purposes.
 - **React 18 + TypeScript + Vite** — static bundle, deployable to any CDN.
 - **Tailwind CSS** — utility styling; spreadsheet colour coding via `.cell-input`,
   `.cell-calc`, `.cell-total`, `.cell-section` classes.
-- **Zustand** (with `persist` middleware) — global inputs store, persisted to localStorage.
+- **Zustand** (with `persist` middleware) — global inputs store, persisted to localStorage
+  under key `taxsim-inputs-v1`.
 - **decimal.js** — all tax arithmetic. Never use `number` / `float` for multi-step
   computation; the §32a quadratic zones and SS-contribution BBG caps accumulate IEEE-754
   drift.
@@ -39,48 +40,85 @@ edit them.
 
 ## Development Commands
 
+All commands run from `client/`:
+
 ```bash
-cd client
 npm install          # install dependencies
 npm start            # dev server on :3000 (hot reload)
-npm run build        # production bundle to client/dist/
+npm run build        # TypeScript compile + production bundle to dist/
 npm run preview      # serve the built bundle locally
-npm test             # Vitest (watch mode)
+npm test             # Vitest watch mode
+npm test -- --run    # Vitest single-pass (CI-style)
+npm test -- src/tax/__tests__/tariff.test.ts   # run one test file
+npm run deploy       # build + publish to GitHub Pages (gh-pages -d dist)
 ```
+
+The Vite config sets `base: '/tax-calculator/'` for GitHub Pages — keep this in place for
+any production build or preview.
 
 ## Architecture
 
 ```
-client/
-├── index.html                       # Vite entry — loads /src/main.tsx
-├── package.json
-├── vite.config.ts                   # port 3000, no proxy; vitest config
-├── tailwind.config.js
-├── tsconfig.json
-└── src/
-    ├── main.tsx                     # React root
-    ├── App.tsx                      # Shell: header + year tabs + section grid + summary
-    ├── index.css                    # Tailwind + cell colour classes
-    ├── tax/                         # Pure calculation layer — no React imports
-    │   ├── types.ts                 # TaxInputs / PersonalInfo / sectional input types
-    │   ├── rates.ts                 # Locked Rates-sheet values per tax year
-    │   ├── tariff.ts                # §32a 5-zone formula + Splittingverfahren
-    │   └── calculator.ts            # Orchestrator — runs all 11 sections
-    ├── store/
-    │   └── useTaxStore.ts           # Zustand store, localStorage-persisted per year
-    ├── components/
-    │   ├── YearTabs.tsx             # 2025 / 2026 switch
-    │   ├── Summary.tsx              # Sticky right-hand summary panel
-    │   └── Section.tsx              # Reusable spreadsheet-style section card
-    │   # [Cell, MonthlyGrid, and per-section components added in Phase 3]
-    └── test/
-        └── setup.ts                 # jest-dom matchers for Vitest
+client/src/
+├── App.tsx                      # Shell: header + year tabs + 15-section grid + sticky summary
+├── tax/                         # Pure calculation layer — no React imports
+│   ├── types.ts                 # TaxInputs / PersonalInfo / all sectional input types
+│   ├── rates.ts                 # Locked Rates-sheet values per tax year
+│   ├── tariff.ts                # §32a 5-zone formula + Splittingverfahren
+│   ├── calculator.ts            # Orchestrator — runs all 11 sections, returns CalculationResult
+│   ├── income.ts                # Per-stream gross/net helpers (employment, freelance, trade…)
+│   ├── sozialversicherung.ts    # KV/PV/RV/ALV with BBG caps + per-child PV rate
+│   ├── werbungskosten.ts        # MAX(itemised, €1,230 Pauschbetrag)
+│   ├── sonderausgaben.ts        # Pension, insurance, donations, childcare, school, church tax
+│   ├── extraordinary.ts         # §33 3-tier zumutbare Belastung + §33a/b flat rates
+│   ├── guenstigerpruefung.ts    # Kinderfreibetrag vs. Kindergeld election + KAP election
+│   ├── kirchensteuer.ts         # §51a — computed on zvE with Kinderfreibetrag always applied
+│   └── solz.ts                  # Solidaritätszuschlag with Milderungszone phase-in
+├── store/
+│   ├── useTaxStore.ts           # Zustand store — `inputs[year][section]` shape, resetYear action
+│   └── hooks.ts                 # useSection<K>(key) — typed slice accessor for section components
+└── components/
+    ├── YearTabs.tsx             # 2025 / 2026 switch
+    ├── Summary.tsx              # Sticky right-hand panel — calls calculate() and renders result
+    ├── Section.tsx              # Reusable spreadsheet-style section card wrapper
+    ├── Cell.tsx                 # Single labelled cell (input or calculated display)
+    ├── MonthlyGrid.tsx          # 12-column monthly salary grid
+    └── sections/                # One component per tax section (15 total)
+        ├── PersonalSection.tsx
+        ├── EmploymentSection.tsx
+        ├── FreelanceTradeSection.tsx
+        ├── RentalSection.tsx
+        ├── CapitalSection.tsx
+        ├── OtherIncomeSection.tsx
+        ├── WerbungskostenSection.tsx
+        ├── SonderausgabenSection.tsx
+        ├── ExtraordinarySection.tsx
+        ├── SozialversicherungSection.tsx
+        ├── LossesSection.tsx
+        ├── ZvESection.tsx
+        ├── TaxComputationSection.tsx
+        ├── WithholdingSection.tsx
+        └── DashboardSection.tsx
 ```
 
-### Calculation flow (`src/tax/calculator.ts`, to be fully wired in Phase 3)
-1. Sum gross income across all streams (§19 employment incl. 12-month salary grid, §18
+### How section components read/write state
+
+All section components use the `useSection<K>` hook from `store/hooks.ts`:
+
+```ts
+const { value, setValue, patch } = useSection('sonderausgaben');
+```
+
+This is the only correct pattern — do not reach into `useTaxStore` directly from sections.
+`patch` does a shallow merge; `setValue` replaces the entire section object.
+
+### Calculation flow (`src/tax/calculator.ts`)
+
+`calculate(inputs: TaxInputs): CalculationResult` is the sole entry point. It:
+
+1. Sums gross income across all streams (§19 employment incl. 12-month salary grid, §18
    freelance, §15 trade, §21 rental, §20 capital, §22 other).
-2. Compute employee social-security contributions (KV/PV/RV/ALV with BBG caps and
+2. Computes employee social-security contributions (KV/PV/RV/ALV with BBG caps and
    per-child PV rate).
 3. Werbungskosten — MAX(itemised, Arbeitnehmer-Pauschbetrag €1,230).
 4. Sonderausgaben (pension capped at €29,344, insurance, donations ≤20% income, childcare
@@ -94,6 +132,8 @@ client/
 10. §51a Kirchensteuer computed on notional ESt that re-adds the Kinderfreibetrag.
 11. Solidaritätszuschlag with Milderungszone phase-in.
 12. Result: `total tax owed − (Lohnsteuer + KiSt + SolZ + KESt withheld)`.
+
+`Summary.tsx` calls `calculate()` directly on every render — no memoisation layer currently.
 
 ## What NOT to change without consulting `BUGS_FIXED.md`
 
